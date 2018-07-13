@@ -10,6 +10,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+model_urls = {
+        'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
+        'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
+        'resnet50': 'https://download.pytorch.org/models/resnet50-19c8e357.pth',
+        'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
+        'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
+    }
+
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -30,30 +38,32 @@ class BasicBlock(nn.Module):
 
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
-        print(out.size())
         self.count_zero(out)
 
         out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
         out = F.relu(out)
-        print(out.size())
         self.count_zero(out)
         return out
 
     def count_zero(self, arr):
         X, Y, W, Z = arr.size()
         lw = 0
+        lw10 = 0
         for i in range(0, Y):
             cnt = float(torch.nonzero(arr[0][i][:][:]).size(0))/float(W*Z)
             print("{0:.2f}, ".format(cnt), end="") 
             if cnt == 0.0:
                 lw = lw + 1
+            if cnt <= 0.10 and cnt != 0:
+                lw10 = lw10 + 1
             if (i+1)%20 == 0:
                 print("\n", end="")
-        print("(zeros: {0:d}/{1:d}={2:0.4f}) ".format(lw, Y, float(lw)/float(Y)))
+        print(arr.size())
+        print("\n(featuremap-wise all-zeros: {0:d}/{1:d}={2:0.4f}) ".format(lw, Y, float(lw)/float(Y)))
+        print("(featuremap-wise 0.1 non-zeros: {0:d}/{1:d}={2:0.4f}) ".format(lw10, Y, float(lw10)/float(Y)))
+        print("(layer-wise non-zeros: {})".format(float(torch.nonzero(arr[0][:][:][:]).size(0))/float(Y*W*Z)))
         #print("number of non-zeros ===> : {0:7.0f} || {1:7.0f} || ratio: {2:.3f}".format(cnt, X*Y*W*Z, float(cnt)/float(X*Y*W*Z)))
-
-
 
 
 class Bottleneck(nn.Module):
@@ -108,13 +118,38 @@ class ResNet(nn.Module):
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
+        self.print_featmap(out)
+
         out = self.layer2(out)
         out = self.layer3(out)
         out = self.layer4(out)
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
+
         return out
+
+    def print_featmap(self, feats):
+        def pf(sp, W, X, Y, arr):
+            f = open("feat.txt", 'a')
+            f.write("sparsity: {}/100: {}x{}x{}\n".format(sp, W, X, Y))
+            for i in range(0, X):
+                for j in range(0, Y):
+                    if arr[i][j].item() == 0.0:
+                        f.write("0, ")
+                    else:
+                        f.write("1, ")
+                f.write("\n")
+            f.write("\n\n\n")
+            f.close()
+
+        _, W, X, Y = feats.size()
+        for i in range(0,W):
+            sp = torch.nonzero(feats[0][i][:][:]).size(0)*100/(X*Y)
+            if ((sp > 45) and (sp < 55)) or ((sp != 0) and (sp < 10)) or (sp > 80) :  
+                pf(sp, i, X, Y, feats[0][i][:][:]) #0.5
+                continue
+
 
 
 def ResNet18():
